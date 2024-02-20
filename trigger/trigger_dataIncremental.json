@@ -1,0 +1,25 @@
+{
+	"name": "trigger_dataIncremental",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Started",
+		"pipelines": [
+			{
+				"pipelineReference": {
+					"referenceName": "ELT_1_DataIncremental",
+					"type": "PipelineReference"
+				}
+			}
+		],
+		"type": "ScheduleTrigger",
+		"typeProperties": {
+			"recurrence": {
+				"frequency": "Day",
+				"interval": 1,
+				"startTime": "2023-12-21T02:00:00",
+				"endTime": "2024-12-31T20:54:00",
+				"timeZone": "Eastern Standard Time"
+			}
+		}
+	}
+}

@@ -1,0 +1,59 @@
+CREATE OR REPLACE PROCEDURE <SCHEMA_NAME>.SP_LOADDATA("WAREHOUSE_NAME" VARCHAR(16777216), "DATABASE_NAME" VARCHAR(16777216), "FILE_NAME_WITH_PATH" VARCHAR(16777216))
+RETURNS VARCHAR(16777216)
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS '
+
+var warehouse = arguments[0];
+var database = arguments[1];
+var file_name_with_path = arguments[2];
+var file_details = file_name_with_path.split(''/'');
+var folder_path= file_details[0]+''/''+file_details[1];
+var folder_name= file_details[1];
+var file_name=file_details[2];
+var table_name=file_name.split(''.'')[0];
+table_name=table_name.toUpperCase();
+try {
+        
+         //Set the warehouse for this session
+         snowflake.execute({ sqlText: ''USE WAREHOUSE '' + warehouse });
+         
+        // dynamic_sql query to load data into destination table
+        var dynamic_sql = ''COPY INTO ''+database+''."'' + table_name + ''" FROM '' + folder_path + ''/'' + 
+        '' PATTERN=\\'''' + file_name + ''\\'''' +
+        '' FILE_FORMAT = (FORMAT_NAME = ''+database+''.PARQUET) MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE'';
+        //return dynamic_sql;
+        var result_set=snowflake.execute({ sqlText: dynamic_sql });
+        while(result_set.next()){
+            var status = result_set.getColumnValue(''status'');
+            var rows_parsed = result_set.getColumnValue(''rows_parsed'');
+            var rows_loaded = result_set.getColumnValue(''rows_loaded'');
+            
+            //Add the execution status to log table
+            var insert_sql = "INSERT INTO "+database+".PIPELINE_FILES_PROCESSED VALUES(''" + folder_path + "'', ''" + file_name + "'', ''" + status + "'',''"+rows_parsed+"'',''"+rows_loaded+"'',sysdate(),TO_TIMESTAMP(''"+folder_name+"'',''YYYYMMDDHH24MISS''))";
+
+           snowflake.execute({ sqlText: insert_sql });
+
+        
+        }
+
+        //Add the execution status to log table
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_LOADDATA- " + table_name + " table - data loaded successfully'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+        
+
+        // Return a success message
+        return ''Data loaded successfully'';
+        
+} catch (err) {
+    
+        //Handle single quotes in the exception to insert the message into log table
+        var exception=err.message.replace(/''/g,'''');
+
+        //Add the execution error to log table
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''ERROR'', ''SP_LOADDATA- " + file_name + " table - " + exception + "'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+       
+        return err;
+}
+';

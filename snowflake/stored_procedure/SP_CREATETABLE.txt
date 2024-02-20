@@ -1,0 +1,59 @@
+CREATE OR REPLACE PROCEDURE <SCHEMA_NAME>.SP_CREATETABLE("WAREHOUSE_NAME" VARCHAR(16777216), "DATABASE_NAME" VARCHAR(16777216), "FILE_NAME_WITH_PATH" VARCHAR(16777216))
+RETURNS VARCHAR(16777216)
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS '
+var warehouse = arguments[0];
+var database = arguments[1];
+var database_name=database.split(''.'')[0];
+var file_name_with_path = arguments[2];
+var file_details = file_name_with_path.split(''/'');
+var folder_path= file_details[0]+''/''+file_details[1];
+var file_name=file_details[2];
+var table_name=file_name.split(''.'')[0];
+table_name=table_name.toUpperCase();
+
+try {
+        
+        //Set the warehouse for this session
+        snowflake.execute({ sqlText: ''USE WAREHOUSE '' + warehouse });
+        snowflake.execute({ sqlText: ''USE DATABASE '' + database_name });
+
+        // Create the dynamic SQL statement to create table
+        var dynamic_sql = ''CREATE TABLE ''+database+''."'' +table_name+''"''+
+          '' USING TEMPLATE ( '' +
+            ''SELECT ARRAY_AGG(OBJECT_CONSTRUCT(''+
+            ''\\''COLUMN_NAME\\'', UPPER(COLUMN_NAME),''+
+            ''\\''EXPRESSION\\'', EXPRESSION,''+
+            ''\\''FILENAMES\\'', FILENAMES,''+
+            ''\\''NULLABLE\\'', NULLABLE,''+
+            ''\\''ORDER_ID\\'', ORDER_ID,''+
+            ''\\''TYPE\\'', TYPE)) '' +
+            ''FROM TABLE( '' +
+              ''INFER_SCHEMA( '' +
+                ''LOCATION=>'' + ''\\'''' + folder_path + ''/'' + file_name + ''\\'','' +
+                ''FILE_FORMAT=>\\''''+database+''.PARQUET'' +''\\''''+
+              '')'' +
+            '')'' +
+          '');'';
+           
+        snowflake.execute({ sqlText: dynamic_sql });
+        
+        //Add the execution status to log table
+        var insert_sql = "INSERT INTO <SCHEMA_NAME>.PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_CREATETABLE- " + table_name + " table - created successfully'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+        
+        // Return a success message
+        return ''Table created successfully'';
+} catch (err) {
+    
+        //Handle single quotes in the exception to insert the message into log table
+        var exception=err.message.replace(/''/g,'''');
+
+        //Add the execution error to log table
+        var insert_sql = "INSERT INTO <SCHEMA_NAME>.PIPELINE_LOGS VALUES (''" + folder_path + "'', ''ERROR'', ''SP_CREATETABLE- " + file_name + "- " + exception + "'',sysdate())";
+        snowflake.execute({ sqlText: insert_sql });
+        
+        return err;
+}
+';

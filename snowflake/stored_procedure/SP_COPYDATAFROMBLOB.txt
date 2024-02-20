@@ -1,0 +1,66 @@
+CREATE OR REPLACE PROCEDURE <SCHEMA_NAME>.SP_COPYDATAFROMBLOB("TIMESTAMP" VARCHAR(16777216))
+RETURNS VARCHAR(16777216)
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS '
+  var folder_name = arguments[0];
+  var warehouse = ''<WAREHOUSE'_NAME>';
+  var database=''<SCHEMA_NAME>'';
+  var folder_path = ''@''+database+''.<BLOBSTORAGE>/'' + folder_name;
+  try {
+    // List Parquet files in the folder
+    var list_files_sql = ''LIST '' + folder_path+''/'' + '' pattern=\\''.*.parquet\\'''';
+    var statement1 = snowflake.createStatement({sqlText: list_files_sql});
+    var result_set = statement1.execute();
+    
+    // Loop through the list of Parquet files and insert them into tables
+    while (result_set.next()) {
+        var full_file_name = result_set.getColumnValue(''name'');
+        var file = full_file_name.split(''/'')[5];
+        var file_name=file.split(''.'')[0];
+        var table_name=file_name.toUpperCase()
+        var file_name_with_path=folder_path+''/''+file;
+        var sql_command = "SHOW TABLES LIKE ''"+database+"."+ table_name + "'';";
+        var statement1 = snowflake.createStatement({ sqlText: sql_command });
+        var resultSet1 = statement1.execute();
+        
+        //If tables does not exist - call the child sp to create table
+        if (!resultSet1.next()){
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_COPYDATAFROMADF- Table doesnt exists.Calling SP_CREATETABLE'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+       
+            var create_sql = ''CALL ''+database+''.SP_CREATETABLE(\\''''+warehouse+''\\'',\\''''+database+''\\'',\\''''+file_name_with_path+''\\'');'';
+            snowflake.execute({ sqlText: create_sql });
+             var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_COPYDATAFROMADF- Return to SP_COPYDATAFROMADF from SP_CREATETABLE'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+       
+        }
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_COPYDATAFROMADF- Loading data.Calling SP_LOADDATA'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+       
+        // Execute the load SQL to load data into the table
+        var load_sql = ''CALL ''+database+''.SP_LOADDATA(\\''''+warehouse+''\\'',\\''''+database+''\\'',\\''''+file_name_with_path+''\\'');'';
+        snowflake.execute({ sqlText: load_sql });
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_COPYDATAFROMADF- Return to SP_COPYDATAFROMADF from SP_LOADDATA'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+
+        }
+        //Add the execution status to log table
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''INFO'', ''SP_COPYDATAFROMADF- Copy data Completed'',sysdate())";
+       snowflake.execute({ sqlText: insert_sql });
+       
+        // Return a success message
+        return ''Copy data Completed'';
+
+        
+  } catch (err) {
+        //Handle single quotes in the exception to insert the message into log table
+        var exception=err.message.replace(/''/g,'''');
+
+        //Add the execution error to log table
+        var insert_sql = "INSERT INTO "+database+".PIPELINE_LOGS VALUES (''" + folder_path + "'', ''ERROR'', ''SP_COPYDATAFROMADF- " + exception + "'',sysdate())";
+        snowflake.execute({ sqlText: insert_sql });
+       
+        return err;
+  }
+  ';
